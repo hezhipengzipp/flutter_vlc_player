@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
@@ -30,7 +32,7 @@ import software.solid.fluttervlcplayer.Enums.HwAcc;
 final class FlutterVlcPlayer implements PlatformView {
 
     private final String TAG = this.getClass().getSimpleName();
-    private final boolean debug = false;
+    private final boolean debug = true;
     //
     private final Context context;
     private final VLCTextureView textureView;
@@ -48,6 +50,7 @@ final class FlutterVlcPlayer implements PlatformView {
     private List<RendererDiscoverer> rendererDiscoverers = new ArrayList<>();
     private List<RendererItem> rendererItems = new ArrayList<>();
     private boolean isDisposed = false;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     // Platform view
     @Override
@@ -59,23 +62,29 @@ final class FlutterVlcPlayer implements PlatformView {
     public void dispose() {
         if (isDisposed)
             return;
-        //
-        textureView.dispose();
-        textureEntry.release();
-        mediaEventChannel.setStreamHandler(null);
-        rendererEventChannel.setStreamHandler(null);
-        if (mediaPlayer != null) {
-            mediaPlayer.stop();
-            mediaPlayer.setEventListener(null);
-            mediaPlayer.getVLCVout().detachViews();
-            mediaPlayer.release();
-            mediaPlayer = null;
-        }
-        if (libVLC != null) {
-            libVLC.release();
-            libVLC = null;
-        }
-        isDisposed = true;
+        // 在后台线程上执行资源清理
+        executor.execute(() -> {
+            if (mediaPlayer != null) {
+                log("dispose: 我在子线程");
+                mediaPlayer.stop();
+                mediaPlayer.setEventListener(null);
+                mediaPlayer.getVLCVout().detachViews();
+                mediaPlayer.release();
+                mediaPlayer = null;
+            }
+            if (libVLC != null) {
+                libVLC.release();
+                libVLC = null;
+            }
+            // 确保在主线程上执行 UI 相关的清理
+            textureView.post(() -> {
+                textureView.dispose();
+                textureEntry.release();
+                mediaEventChannel.setStreamHandler(null);
+                rendererEventChannel.setStreamHandler(null);
+            });
+            isDisposed = true;
+        });
     }
 
     // VLC Player
@@ -246,13 +255,14 @@ final class FlutterVlcPlayer implements PlatformView {
 
     void pause() {
         if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-            mediaPlayer.pause();
+            executor.execute(() -> mediaPlayer.pause());
         }
     }
 
     void stop() {
+        // 在后台线程上执行 mediaPlayer.stop()
         if (mediaPlayer != null) {
-            mediaPlayer.stop();
+            executor.execute(() -> mediaPlayer.stop());
         }
     }
 
