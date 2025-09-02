@@ -25,11 +25,12 @@ public class FlutterVlcPlayerPlugin implements FlutterPlugin, ActivityAware {
         flutterPluginBinding = binding;
 
         //
+        final FlutterInjector injector = FlutterInjector.instance();
         flutterVlcPlayerFactory =
                 new FlutterVlcPlayerFactory(
                         flutterPluginBinding.getBinaryMessenger(),
                         flutterPluginBinding.getTextureRegistry(),
-                        injector.flutterLoader( )::getLookupKeyForAsset,
+                        injector.flutterLoader()::getLookupKeyForAsset,
                         injector.flutterLoader()::getLookupKeyForAsset
                 );
         flutterPluginBinding

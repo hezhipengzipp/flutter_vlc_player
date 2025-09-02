@@ -3,6 +3,8 @@ package software.solid.fluttervlcplayer;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
 import android.view.View;
@@ -51,7 +53,8 @@ final class FlutterVlcPlayer implements PlatformView {
     private List<RendererItem> rendererItems = new ArrayList<>();
     private boolean isDisposed = false;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
-
+    // 添加一个与主线程关联的 Handler
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     // Platform view
     @Override
     public View getView() {
@@ -147,104 +150,120 @@ final class FlutterVlcPlayer implements PlatformView {
         mediaPlayer.setVideoTrackEnabled(true);
         //
         mediaPlayer.setEventListener(
-                new MediaPlayer.EventListener() {
-                    @Override
-                    public void onEvent(MediaPlayer.Event event) {
-                        HashMap<String, Object> eventObject = new HashMap<>();
-                        //
-                        // Current video track is only available when the media is playing
-                        int height = 0;
-                        int width = 0;
-                        Media.VideoTrack currentVideoTrack = mediaPlayer.getCurrentVideoTrack();
-                        if (currentVideoTrack != null) {
-                            height = currentVideoTrack.height;
-                            width = currentVideoTrack.width;
-                        }
-                        //
-                        switch (event.type) {
+                event -> {
+                    HashMap<String, Object> eventObject = new HashMap<>();
+                    //
+                    if (event.type == MediaPlayer.Event.Playing) {
+                        // 播放开始后，立即在后台线程获取视频轨道信息
+                        executor.execute(() -> {
+                            try {
+                                // 确保 mediaPlayer 在子线程中可用
+                                Thread.sleep(100); // 添加短暂延时，确保播放器状态更新
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                            log("开始在子线程调用getCurrentVideoTrack");
+                            Media.VideoTrack currentVideoTrack = mediaPlayer.getCurrentVideoTrack();
 
-                            case MediaPlayer.Event.Opening:
-                                eventObject.put("event", "opening");
-                                mediaEventSink.success(eventObject);
-                                break;
-
-                            case MediaPlayer.Event.Paused:
-                                eventObject.put("event", "paused");
-                                mediaEventSink.success(eventObject);
-                                break;
-
-                            case MediaPlayer.Event.Stopped:
-                                eventObject.put("event", "stopped");
-                                mediaEventSink.success(eventObject);
-                                break;
-
-                            case MediaPlayer.Event.Playing:
-                                eventObject.put("event", "playing");
-                                eventObject.put("height", height);
-                                eventObject.put("width", width);
-                                eventObject.put("speed", mediaPlayer.getRate());
-                                eventObject.put("duration", mediaPlayer.getLength());
-                                eventObject.put("audioTracksCount", mediaPlayer.getAudioTracksCount());
-                                eventObject.put("activeAudioTrack", mediaPlayer.getAudioTrack());
-                                eventObject.put("spuTracksCount", mediaPlayer.getSpuTracksCount());
-                                eventObject.put("activeSpuTrack", mediaPlayer.getSpuTrack());
-                                mediaEventSink.success(eventObject.clone());
-                                break;
-
-                            case MediaPlayer.Event.Vout:
-//                                mediaPlayer.getVLCVout().setWindowSize(textureView.getWidth(), textureView.getHeight());
-                                break;
-
-                            case MediaPlayer.Event.EndReached:
-                                eventObject.put("event", "ended");
-                                eventObject.put("position", mediaPlayer.getTime());
-                                mediaEventSink.success(eventObject);
-                                break;
-
-                            case MediaPlayer.Event.Buffering:
-                            case MediaPlayer.Event.TimeChanged:
-                                eventObject.put("event", "timeChanged");
-                                eventObject.put("height", height);
-                                eventObject.put("width", width);
-                                eventObject.put("speed", mediaPlayer.getRate());
-                                eventObject.put("position", mediaPlayer.getTime());
-                                eventObject.put("duration", mediaPlayer.getLength());
-                                eventObject.put("buffer", event.getBuffering());
-                                eventObject.put("audioTracksCount", mediaPlayer.getAudioTracksCount());
-                                eventObject.put("activeAudioTrack", mediaPlayer.getAudioTrack());
-                                eventObject.put("spuTracksCount", mediaPlayer.getSpuTracksCount());
-                                eventObject.put("activeSpuTrack", mediaPlayer.getSpuTrack());
-                                eventObject.put("isPlaying", mediaPlayer.isPlaying());
-                                mediaEventSink.success(eventObject);
-                                break;
-
-                            case MediaPlayer.Event.EncounteredError:
-                                //mediaEventSink.error("500", "Player State got an error.", null);
-                                eventObject.put("event", "error");
-                                mediaEventSink.success(eventObject);
-                                break;
-
-                            case MediaPlayer.Event.RecordChanged:
-                                eventObject.put("event", "recording");
-                                eventObject.put("isRecording", event.getRecording());
-                                eventObject.put("recordPath", event.getRecordPath());
-                                mediaEventSink.success(eventObject);
-                                break;
-
-                            case MediaPlayer.Event.LengthChanged:
-                            case MediaPlayer.Event.MediaChanged:
-                            case MediaPlayer.Event.ESAdded:
-                            case MediaPlayer.Event.ESDeleted:
-                            case MediaPlayer.Event.ESSelected:
-                            case MediaPlayer.Event.PausableChanged:
-                            case MediaPlayer.Event.SeekableChanged:
-                            case MediaPlayer.Event.PositionChanged:
-                            default:
-                                break;
-                        }
+                            // 将结果传递回主线程
+                            mainHandler.post(() -> {
+                                if (currentVideoTrack != null) {
+                                    int height = currentVideoTrack.height;
+                                    int width = currentVideoTrack.width;
+                                    // 你现在可以安全地将这些数据传递给 Flutter 的 EventChannel
+                                    // 或者用它来更新主线程上的 UI
+                                    log("视频轨道信息已在主线程上获取: " + width + "x" + height);
+                                    dealWithEvent(event, eventObject, height, width);
+                                }
+                            });
+                        });
                     }
                 }
         );
+    }
+
+    private void dealWithEvent(MediaPlayer.Event event, HashMap<String, Object> eventObject, int height, int width) {
+        switch (event.type) {
+
+            case MediaPlayer.Event.Opening:
+                eventObject.put("event", "opening");
+                mediaEventSink.success(eventObject);
+                break;
+
+            case MediaPlayer.Event.Paused:
+                eventObject.put("event", "paused");
+                mediaEventSink.success(eventObject);
+                break;
+
+            case MediaPlayer.Event.Stopped:
+                eventObject.put("event", "stopped");
+                mediaEventSink.success(eventObject);
+                break;
+
+            case MediaPlayer.Event.Playing:
+                eventObject.put("event", "playing");
+                eventObject.put("height", height);
+                eventObject.put("width", width);
+                eventObject.put("speed", mediaPlayer.getRate());
+                eventObject.put("duration", mediaPlayer.getLength());
+                eventObject.put("audioTracksCount", mediaPlayer.getAudioTracksCount());
+                eventObject.put("activeAudioTrack", mediaPlayer.getAudioTrack());
+                eventObject.put("spuTracksCount", mediaPlayer.getSpuTracksCount());
+                eventObject.put("activeSpuTrack", mediaPlayer.getSpuTrack());
+                mediaEventSink.success(eventObject.clone());
+                break;
+
+            case MediaPlayer.Event.Vout:
+//                                mediaPlayer.getVLCVout().setWindowSize(textureView.getWidth(), textureView.getHeight());
+                break;
+
+            case MediaPlayer.Event.EndReached:
+                eventObject.put("event", "ended");
+                eventObject.put("position", mediaPlayer.getTime());
+                mediaEventSink.success(eventObject);
+                break;
+
+            case MediaPlayer.Event.Buffering:
+            case MediaPlayer.Event.TimeChanged:
+                eventObject.put("event", "timeChanged");
+                eventObject.put("height", height);
+                eventObject.put("width", width);
+                eventObject.put("speed", mediaPlayer.getRate());
+                eventObject.put("position", mediaPlayer.getTime());
+                eventObject.put("duration", mediaPlayer.getLength());
+                eventObject.put("buffer", event.getBuffering());
+                eventObject.put("audioTracksCount", mediaPlayer.getAudioTracksCount());
+                eventObject.put("activeAudioTrack", mediaPlayer.getAudioTrack());
+                eventObject.put("spuTracksCount", mediaPlayer.getSpuTracksCount());
+                eventObject.put("activeSpuTrack", mediaPlayer.getSpuTrack());
+                eventObject.put("isPlaying", mediaPlayer.isPlaying());
+                mediaEventSink.success(eventObject);
+                break;
+
+            case MediaPlayer.Event.EncounteredError:
+                //mediaEventSink.error("500", "Player State got an error.", null);
+                eventObject.put("event", "error");
+                mediaEventSink.success(eventObject);
+                break;
+
+            case MediaPlayer.Event.RecordChanged:
+                eventObject.put("event", "recording");
+                eventObject.put("isRecording", event.getRecording());
+                eventObject.put("recordPath", event.getRecordPath());
+                mediaEventSink.success(eventObject);
+                break;
+
+            case MediaPlayer.Event.LengthChanged:
+            case MediaPlayer.Event.MediaChanged:
+            case MediaPlayer.Event.ESAdded:
+            case MediaPlayer.Event.ESDeleted:
+            case MediaPlayer.Event.ESSelected:
+            case MediaPlayer.Event.PausableChanged:
+            case MediaPlayer.Event.SeekableChanged:
+            case MediaPlayer.Event.PositionChanged:
+            default:
+                break;
+        }
     }
 
     void play() {
